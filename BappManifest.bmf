@@ -1,0 +1,11 @@
+Uuid: 4316cc18ac5f434884b2089831c7d19e
+ExtensionType: 1
+Name: Authz
+ScreenVersion: 0.0.9
+SerialVersion: 1
+MinPlatformVersion: 0
+ProOnly: False
+Author: Wuntee
+ShortDescription: Helps test for authorization vulnerabilities.
+EntryPoint: target/BurpAuthzPlugin-0.0.9-SNAPSHOT-jar-with-dependencies.jar
+BuildCommand: mvn package -DskipTests=true -Dmaven.javadoc.skip=true -B

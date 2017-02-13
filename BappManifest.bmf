@@ -1,6 +1,7 @@
 Uuid: 4316cc18ac5f434884b2089831c7d19e
 ExtensionType: 1
 Name: Authz
+RepoName: authz
 ScreenVersion: 0.0.9
 SerialVersion: 1
 MinPlatformVersion: 0

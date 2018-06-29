@@ -417,7 +417,7 @@ public class AuthzContainer extends Container {
                                 for(int i=0;i<newHeaders.length;i++)
                                 {
                                     if(headers.get(h).toLowerCase().startsWith(headerNames[i].toLowerCase())){
-                                            headers.set(h, headerNames[i] + newHeaders[i]);
+                                            headers.set(h, headerNames[i].replace("\n","").replace("\r","") + newHeaders[i]);
                                             //break;
                                     }
                                 }
@@ -451,7 +451,7 @@ public class AuthzContainer extends Container {
                             if(kv.length == 2)
                             {
 				headerNames[i] = kv[0] + ":";
-                                newHeaders[i] = kv[1]; 
+                                newHeaders[i] = kv[1].replace("\n","").replace("\r","");
                             }   
                         }
 	}

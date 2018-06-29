@@ -35,7 +35,7 @@ import burp.IHttpRequestResponsePersisted;
 import burp.IRequestInfo;
 import burp.IResponseInfo;
 
-import com.nothome.delta.Delta;
+
 
 public class AuthzContainer extends Container {
 	private static final long serialVersionUID = 31337L;
@@ -54,10 +54,8 @@ public class AuthzContainer extends Container {
 
 	private IBurpExtenderCallbacks burpCallback;
 
-	private Delta delta;
-
-	private String newHeader;
-	private String headerName;
+	private String[] newHeaders;
+	private String[] headerNames;
 
 	public static String REQUEST_OBJECT_KEY = "req_obj_key";
 	public static String RESPONSE_OBJECT_KEY = "resp_obj_key";
@@ -68,7 +66,6 @@ public class AuthzContainer extends Container {
 	public AuthzContainer(final IBurpExtenderCallbacks burpCallback) {
 
 		this.burpCallback = burpCallback;
-		this.delta = new Delta();
 		GridBagLayout gridBagLayout = new GridBagLayout();
 		gridBagLayout.columnWeights = new double[]{1.0};
 		gridBagLayout.rowWeights = new double[]{0, 1.0, 0};
@@ -114,7 +111,7 @@ public class AuthzContainer extends Container {
 		gbl_panel_3.rowWeights = new double[]{0, 1};
 		panel_3.setLayout(gbl_panel_3);
 
-		JLabel lblNewHeader = new JLabel("New Header", SwingConstants.LEFT);
+		JLabel lblNewHeader = new JLabel("New Headers (separate with newline to have multiple headers replaced)", SwingConstants.LEFT);
 		GridBagConstraints gbc_lblNewHeader = new GridBagConstraints();
 		gbc_lblNewHeader.anchor = GridBagConstraints.WEST;
 		gbc_lblNewHeader.insets = new Insets(0, 0, 5, 0);
@@ -185,7 +182,7 @@ public class AuthzContainer extends Container {
 			public void actionPerformed(ActionEvent e) {
 				new Thread(new Runnable(){
 					public void run() {
-						prepareHeader();
+						prepareHeaders();
 						for (int rowNum: requestTable.getSelectedRows()) {
 							runRequest(getRequestObjectByRow(requestTable, rowNum));
 						}
@@ -412,11 +409,18 @@ public class AuthzContainer extends Container {
 			IRequestInfo reqInfo = burpCallback.getHelpers().analyzeRequest(rawRequest);
 			// header of request should be a string
 			List<String> headers = reqInfo.getHeaders();
-			for(int h=0; h<headers.size(); h++){
-				if(headers.get(h).toLowerCase().startsWith(headerName)){
-					headers.set(h, newHeader);
-					break;
-				}
+                        // iterate over all headers
+			for(int h=0; h<headers.size(); h++)
+                        {
+                                // iterate over all new headers
+                                // on match, replace the header
+                                for(int i=0;i<newHeaders.length;i++)
+                                {
+                                    if(headers.get(h).toLowerCase().startsWith(headerNames[i].toLowerCase())){
+                                            headers.set(h, headerNames[i] + newHeaders[i]);
+                                            //break;
+                                    }
+                                }
 			}
 			byte message[] = burpCallback.getHelpers().buildHttpMessage(headers, Arrays.copyOfRange(rawRequest, reqInfo.getBodyOffset(), rawRequest.length));
 
@@ -433,15 +437,23 @@ public class AuthzContainer extends Container {
 	}
 
 	//set headerName and newHeader
-	private void prepareHeader() {
-			newHeader = new String(cookieEditor.getText());
+	private void prepareHeaders() {
+			String newHeadersRaw = new String(cookieEditor.getText());
 
 			// Find which HTTP header we are looking for - may not be a cookie
-			headerName = "cookie:";
-			String[] kv = newHeader.split(":", 2);
-			if(kv.length == 2){
-				headerName = kv[0].toLowerCase() + ":";
-			}
+                        String headers[] = newHeadersRaw.split("\n");
+                        this.newHeaders = new String[headers.length];
+                        this.headerNames = new String[headers.length];
+                        for(int i=0;i<headers.length;i++)
+                        {
+                            //headerName = "cookie:";                            
+                            String[] kv = headers[i].split(":", 2);
+                            if(kv.length == 2)
+                            {
+				headerNames[i] = kv[0] + ":";
+                                newHeaders[i] = kv[1]; 
+                            }   
+                        }
 	}
 
 	private void runAllRequests(){
@@ -449,7 +461,7 @@ public class AuthzContainer extends Container {
 			// Clear responses
 			clearTable(responseTableModel);
 
-			prepareHeader();
+			prepareHeaders();
 
 			for(int i=0; i<requestTable.getRowCount(); i++){
 				runRequest(getRequestObjectByRow(requestTable, i));
@@ -494,9 +506,10 @@ public class AuthzContainer extends Container {
 
 		try{
 
-			byte[] diffb = delta.compute(originalResponseBytes,
-											 replayedResponse.substring(replayedResponseInfo.getBodyOffset()).getBytes());
-			diff = diffb.length;
+			
+			//								 replayedResponse.substring(replayedResponseInfo.getBodyOffset()).getBytes());
+			//diff = diffb.length;
+                        diff = 1337;
 			double total = originalResponseLength + replayedResponseLength;
 			double percent = (1.0-((diff*2)/total))*100.0;
 			similarity = (int)percent;

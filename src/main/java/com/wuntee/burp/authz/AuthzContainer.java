@@ -34,12 +34,13 @@ import burp.IHttpRequestResponse;
 import burp.IHttpRequestResponsePersisted;
 import burp.IRequestInfo;
 import burp.IResponseInfo;
+import javax.swing.JCheckBox;
 
 
 
 public class AuthzContainer extends Container {
 	private static final long serialVersionUID = 31337L;
-
+        protected JCheckBox chkbxExtendedChecks;
 	private JTable requestTable;
 	private JTable responseTable;
 
@@ -373,7 +374,38 @@ public class AuthzContainer extends Container {
 		GridBagConstraints gbc_btnClearResponses = new GridBagConstraints();
 		gbc_btnClearResponses.gridx = 2;
 		gbc_btnClearResponses.gridy = 0;
+                               
+                // Extended checks to implement:
+                // 1. Null session (no cookies)
+                // 2. Path mangling (e.g. adding slashes, dots, mixing cases)
+                // 4. Path info mangling
+                // 3. Query string mangling (anything more than magic params? - maybe the hash sign (that should never be sent to servers?)               
+                // 4. Magic params (Cookies, QUERY_STRING)
+                // 5. Magic headers (user agent, X-Forwarded-For, Host??)
+                // 6. HTTP methods (e.g. options instead of GET, PUT instead of POST)
+                // anything else? different representations of values maybe? encodings, notations???
+                
+                
+                // What is nice about this plugin is that these issues - if present - are in most cases going ot be global for the entire app
+                // which means we really need just one round of extended checks.
+                
+                // Algorithm:
+                // 1. Check under legitimate privileges [ STANDARD ]
+                // 2. Check under low user privileges   [ STANDARD ]
+                // 3. Check under low user privileges with extended checks      [ MY IMPROVEMENT ]
+                // 4. If successful, we manually check with null session
+                // 5. We can, however, check with null session anyway if we want real thoroughness
+                
+                chkbxExtendedChecks = new JCheckBox();
+                chkbxExtendedChecks.setText("Extended checks");
+                GridBagConstraints gbc_chkbxExtendedChecks = new GridBagConstraints();
+		gbc_btnClearRequests.insets = new Insets(0, 0, 5, 0);
+		gbc_btnClearRequests.gridx = 3;
+		gbc_btnClearRequests.gridy = 0;
+                
+                
 		panel_2.add(btnClearResponses, gbc_btnClearResponses);
+                panel_2.add(chkbxExtendedChecks, gbc_chkbxExtendedChecks);                
 	}
 
 	private void setData(IHttpRequestResponse request, IHttpRequestResponse response){

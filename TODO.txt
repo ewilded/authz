@@ -9,6 +9,8 @@ This will be the exact opposite if we test from a black-box perspective (e.g. we
 
 - Build nice test cases and include them into the project
 
+- Add a column representing what bypass method this particular request/response used (and maybe remove the diff bytes and similarity columns entirely?)
+
 - Documentation
 
 - Fix the "diff bytes 1337" at some point? :D

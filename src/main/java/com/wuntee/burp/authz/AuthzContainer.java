@@ -586,7 +586,17 @@ public class AuthzContainer extends Container {
                // 1. cookies 
                // whereas we append the cookie header and send it out just like above               
                // 2. query string - whereas we add parameters to the request
-               String originalCookieHeader = headers.get(indexOfTheCookieHeader);
+               String originalCookieHeader = "";
+               if(indexOfTheCookieHeader==0)
+               {
+                    originalCookieHeader="Cookie: noneof=theexpected";
+                    headers.add(originalCookieHeader);
+                    indexOfTheCookieHeader=headers.size()-1;
+               }
+               else
+               {
+                   originalCookieHeader = headers.get(indexOfTheCookieHeader);
+               }
                String newCookieHeader = originalCookieHeader;
                
                String[] magicParams={
@@ -641,7 +651,9 @@ public class AuthzContainer extends Container {
                    {
                        separator="?";
                    }
-                   String newUrlFile = urlFile+"&"+magicQueryString;                   
+                   
+                   
+                   String newUrlFile = urlFile+separator+"&"+magicQueryString;                   
                    
                    maliciousRequestString = maliciousRequestString.replace(urlFile, newUrlFile);
                    
@@ -663,9 +675,38 @@ public class AuthzContainer extends Container {
                logOutput("[DEBUG] Query string not supported for "+originalReqInfo.getMethod()+" HTTP method, nothing to do.");
                return;               
             }            
-            
+            if(transformation=="http_verbs")
+            {
+                // so far we'll only try the following method flippings:
+                
+                // GET -> OPTIONS (got me a shell once :D)
+                String reqLine;
+                if(originalReqInfo.getMethod()=="GET")
+                {
+                    // let's try with OPTIONS
+                    headers.set(0, headers.get(0).replace("GET", "OPTIONS"));
+                    
+                    maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
+                    maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);                    
+                    runRequest(maliciousRequest, originalReqResp, "Method flip");                     
+                    headers.set(0, headers.get(0).replace("OPTIONS",originalReqInfo.getMethod())); // restore the original value
+                }
+                
+                // ANY (POST/GET) -> INVLD                                                
+                headers.set(0, headers.get(0).replace(originalReqInfo.getMethod(), "INVLD"));
+                maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
+                maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
+                runRequest(maliciousRequest, originalReqResp, "Method flip 2");                     
+                headers.set(0, headers.get(0).replace("OPTIONS",originalReqInfo.getMethod())); // restore the original value
+                return;                
+                
+                // And what about case mixing in the method :) ?
+                // like get and GeT?
+            }            
             // So far so good
             /*
+            
+            // now why not to try some path normalization tricks to try to bypass ACLs
             if(transformation=="path")
             {
                 String originalPath = reqInfo.getUrl().getPath();
@@ -677,11 +718,32 @@ public class AuthzContainer extends Container {
                 // /admin//manage_user
                 // /%2fadmin/manage_user
                 // //admin/%2fmanage_user                        
+                // /admin/../admin
+                
+                // let's try with these:
+                // /admin;foo=bar/?query=string
+                // /admin;foo=/bar/?query=string
+                // /admin/;foo=bar/?query=string
+                // /admin/;foo=/bar/?query=string
+            
                 // 
-                //byte 
+                // this: /nuxeo/login.jsp;/..;/[unauthorized_area]
+                // is an actual example from https://i.blackhat.com/us-18/Wed-August-8/us-18-Orange-Tsai-Breaking-Parser-Logic-Take-Your-Path-Normalization-Off-And-Pop-0days-Out-2.pdf
+                // the only problem with automating this approach here is that we need to extract and confirm some publicly accessible directory from the SiteMap
+                // so we can build URIs like:
+                // /css/style.css;..;/[original_URI_we_are_testing_against]
+                // yeah I believe we can pick this up by simply trying any .css, .js or .png/.jpg file from the site map...
+                // or even fucking favicon.ico or robots.txt cause why not ;)
+                
+                // also on windows I'd try things like:
+                // - case mixing
+                // - appending the file name with a dot
+                // - trying the legacy dos file names
+            
                 runRequest(maliciousRequest, originalReqResp);
             }
             */
+
             //logOutput("Unknown transformation '"+transformation+"' (maybe not yet implemented?). Nothing to do.");
         }
         private void runRequest(byte[] maliciousRequest, IHttpRequestResponse originalReqResp, String method)

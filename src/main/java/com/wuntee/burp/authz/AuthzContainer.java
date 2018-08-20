@@ -39,24 +39,24 @@ import javax.swing.JCheckBox;
 
 
 public class AuthzContainer extends Container {
-	private static final long serialVersionUID = 31337L;
-        protected JCheckBox chkbxExtendedChecks;
+	private static final long serialVersionUID = 31337L;        
 	private JTable requestTable;
 	private JTable responseTable;
 
+        private String[] headersToReplace;
+        private String[] namesOfHeadersToReplace;
+        
 	private TabbedHttpEditor originalRequest;
 	private TabbedHttpEditor originalResponse;
 	private TabbedHttpEditor modifiedRequest;
 	private TabbedHttpEditor responseEditor;
 	private BurpTextEditorWithData cookieEditor;
+        private JCheckBox chkbxExtendedChecks;
 
 	private DefaultTableModel requestTableModel;
 	private DefaultTableModel responseTableModel;
 
 	private IBurpExtenderCallbacks burpCallback;
-
-	private String[] newHeaders;
-	private String[] headerNames;
 
 	public static String REQUEST_OBJECT_KEY = "req_obj_key";
 	public static String RESPONSE_OBJECT_KEY = "resp_obj_key";
@@ -64,12 +64,16 @@ public class AuthzContainer extends Container {
 	private static Object[] RESPONSE_HEADERS = new Object[]{"#", "Method", "URL", "Parms","Orig Response Size", "Response Size", "Orig Return Code", "Return Code", "Diff Bytes", "Similarity", REQUEST_OBJECT_KEY, RESPONSE_OBJECT_KEY};
 	public static String TEXTEDITOR_REQUET_KEY = IHttpRequestResponse.class.toString();
 
+        private PrintWriter output;
+        
 	public AuthzContainer(final IBurpExtenderCallbacks burpCallback) {
 
 		this.burpCallback = burpCallback;
+                this.output =  new PrintWriter(burpCallback.getStdout(),true);            			
 		GridBagLayout gridBagLayout = new GridBagLayout();
 		gridBagLayout.columnWeights = new double[]{1.0};
 		gridBagLayout.rowWeights = new double[]{0, 1.0, 0};
+                
 		setLayout(gridBagLayout);
 
 		// Create a model that has the Object reference, but do not show the object reference in the GUI
@@ -185,7 +189,7 @@ public class AuthzContainer extends Container {
 					public void run() {
 						prepareHeaders();
 						for (int rowNum: requestTable.getSelectedRows()) {
-							runRequest(getRequestObjectByRow(requestTable, rowNum));
+							runRequests(getRequestObjectByRow(requestTable, rowNum));                                                        
 						}
 					}
 				}).start();
@@ -398,6 +402,7 @@ public class AuthzContainer extends Container {
                 
                 chkbxExtendedChecks = new JCheckBox();
                 chkbxExtendedChecks.setText("Extended checks");
+                chkbxExtendedChecks.setSelected(true);
                 GridBagConstraints gbc_chkbxExtendedChecks = new GridBagConstraints();
 		gbc_btnClearRequests.insets = new Insets(0, 0, 5, 0);
 		gbc_btnClearRequests.gridx = 3;
@@ -433,34 +438,39 @@ public class AuthzContainer extends Container {
 
 	}
 
-	// For a given request, grab request object, replace cookie, send request, add response to response table
-	private void runRequest(IHttpRequestResponse req) {
-		try {
-			byte[] rawRequest = req.getRequest();
-
-			IRequestInfo reqInfo = burpCallback.getHelpers().analyzeRequest(rawRequest);
-			// header of request should be a string
-			List<String> headers = reqInfo.getHeaders();
-                        // iterate over all headers
-			for(int h=0; h<headers.size(); h++)
+	// For a given request:
+        // 1. grab request object
+        // 2. do relevant modifications (e.g. replace the cookie)
+        // 3. send request
+        // 4. add response to response table
+	private void runRequests(IHttpRequestResponse req) 
+        {
+                // From here, we are simply calling the runTransformations() method multiple times (one time per each transformation name).               
+                // We are passing the transformation name and the original requestResponse object.
+                // This object will be used in two ways:
+                // - its request element will be used as a template to forge the attack request
+                // - its response element will be used as a pattern to compare the new response with, so we can decide on how to colorize the new request/response to indicate whether there seems to be a vulnerability or not.            
+		try 
+                {
+                        // By now, "headers" is the default transformation.
+                        // Also, it occurs for all other transformations too (except for the null session, which overrides the cookies)                        
+			runTransformations("headers",req); 
+			
+                        // Now, the extended checks
+                        
+                        if(chkbxExtendedChecks.isSelected()==true)
                         {
-                                // iterate over all new headers
-                                // on match, replace the header
-                                for(int i=0;i<newHeaders.length;i++)
-                                {
-                                    if(headers.get(h).toLowerCase().startsWith(headerNames[i].toLowerCase())){
-                                            headers.set(h, headerNames[i].replace("\n","").replace("\r","") + newHeaders[i]);
-                                            //break;
-                                    }
-                                }
-			}
-			byte message[] = burpCallback.getHelpers().buildHttpMessage(headers, Arrays.copyOfRange(rawRequest, reqInfo.getBodyOffset(), rawRequest.length));
-
-			IHttpRequestResponse resp = burpCallback.makeHttpRequest(req.getHttpService(), message);
-
-			addResponse(req, resp);
-
-		} catch (Throwable e) {
+                            // Will GUI these up once they're working
+                            String[] transformations = {"null_session","path","path_info","query_string","magic_params","http_verbs","magic_headers"};
+                            for (String transformation: transformations)
+                            { 
+                                runTransformations(transformation, req); 
+                            }
+                        }
+                        
+		} 
+                catch (Throwable e) 
+                {
 			PrintWriter writer = new PrintWriter(burpCallback.getStderr());
 			writer.write(e.getMessage());
 			writer.write("\n");
@@ -468,44 +478,139 @@ public class AuthzContainer extends Container {
 		}
 	}
 
+        private void runTransformations(String transformation, IHttpRequestResponse originalReqResp)
+        {
+            
+            byte[] originalRawRequest = originalReqResp.getRequest(); 
+                        
+            byte[] maliciousRequest;     // 
+            byte[] maliciousRequestBody; // Arrays.copyOfRange(maliciousRawRequest, reqInfo.getBodyOffset(), maliciousRawRequest.length);
+            
+            IRequestInfo originalReqInfo = burpCallback.getHelpers().analyzeRequest(originalReqResp);
+            // header of request should be a string
+            List<String> headers = originalReqInfo.getHeaders();
+            // iterate over all headers
+            for(int h=0; h<headers.size(); h++)
+            {
+                // the "headers" transformation is inherent
+                // iterate over all new headers
+                // on match, replace the header
+                for(int i=0;i<headersToReplace.length;i++)
+                {
+                    if(headers.get(h).toLowerCase().startsWith(namesOfHeadersToReplace[i].toLowerCase()))
+                    {
+                        if(namesOfHeadersToReplace[i].startsWith("Cookie")&&(transformation=="null_session"||transformation=="magic_params"))
+                        {
+                            if(transformation=="null_session")
+                            {
+                                headers.set(h, "Cookie: no=thing");
+                            }
+                            else
+                            {
+                                //we add user-defined custom headers, then we append the cookies with the magic list
+                                String magic_cookies="admin=1; operator=1;";
+                                headers.set(h, namesOfHeadersToReplace[i].replace("\n","").replace("\r","") + headersToReplace[i] + "; "+magic_cookies);                                
+                            }
+                        }
+                        // not dealing with a cookie header or dealing with a cookie header but the transformation is null_session or magic_params
+                        else
+                        {
+                            headers.set(h, namesOfHeadersToReplace[i].replace("\n","").replace("\r","") + headersToReplace[i]);
+                        }
+                    }
+                }
+            }
+            
+            logOutput("[DEBUG] Running '"+transformation+"' transform.");
+            
+            // We will want to have more requests for some transformations (like path, where there can be different variants)
+            // while only having one for others (e.g. null_session)
+            // thus all runRequest() calls will be performed individually in each transformation-specific conditional block
+                               
+            if(transformation=="headers"||transformation=="null_session")
+            {
+                // In this case (the basic, original tampering - we only replace the user-defined header list - Cookie by default)
+                // So, the request method, URL and body are unchanged.
+                maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
+                maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
+                runRequest(maliciousRequest, originalReqResp);
+                return;
+            }            
+            // "magic_params" is similar, however does not end on cookies
+            // as it as well supports query string parameters
+            // I guess we'll add them with the "addParameter" API call?
+            // appears comfy to code, but won't be good for performance
+                                        
+            /*
+            if(transformation=="path")
+            {
+                String originalPath = reqInfo.getUrl().getPath();
+                // For example, the original path is as follows:
+                
+                // /admin/manage_user
+                // we wanna make the following variations:
+                // //admin/manage_user
+                // /admin//manage_user
+                // /%2fadmin/manage_user
+                // //admin/%2fmanage_user                        
+                // 
+                //byte 
+                runRequest(maliciousRequest, originalReqResp);
+            }
+            */
+            logOutput("Unknown transformation '"+transformation+"' (maybe not yet implemented?). Nothing to do.");
+        }
+        private void runRequest(byte[] maliciousRequest, IHttpRequestResponse originalReqResp)
+        {                                 
+            IHttpRequestResponse resp = burpCallback.makeHttpRequest(originalReqResp.getHttpService(), maliciousRequest); 
+            addResponse(originalReqResp, resp);
+        }
 	//set headerName and newHeader
 	private void prepareHeaders() {
 			String newHeadersRaw = new String(cookieEditor.getText());
 
 			// Find which HTTP header we are looking for - may not be a cookie
                         String headers[] = newHeadersRaw.split("\n");
-                        this.newHeaders = new String[headers.length];
-                        this.headerNames = new String[headers.length];
+                        this.headersToReplace = new String[headers.length];
+                        this.namesOfHeadersToReplace = new String[headers.length];
                         for(int i=0;i<headers.length;i++)
                         {
                             //headerName = "cookie:";                            
                             String[] kv = headers[i].split(":", 2);
                             if(kv.length == 2)
                             {
-				headerNames[i] = kv[0] + ":";
-                                newHeaders[i] = kv[1].replace("\n","").replace("\r","");
+				namesOfHeadersToReplace[i] = kv[0] + ":";
+                                headersToReplace[i] = kv[1].replace("\n","").replace("\r","");
                             }   
                         }
 	}
 
 	private void runAllRequests(){
-		try{
+		try
+                {
 			// Clear responses
 			clearTable(responseTableModel);
 
 			prepareHeaders();
 
-			for(int i=0; i<requestTable.getRowCount(); i++){
-				runRequest(getRequestObjectByRow(requestTable, i));
+			for(int i=0; i<requestTable.getRowCount(); i++)
+                        {
+				runRequests(getRequestObjectByRow(requestTable, i));                		
 			}
 
-		} catch(Throwable e){
+		} 
+                catch(Throwable e)
+                {
 			PrintWriter writer = new PrintWriter(burpCallback.getStderr());
 			writer.write(e.getMessage());
 			writer.write("\n");
 			e.printStackTrace(writer);
 		}
 	}
+        private void logOutput(String message)
+        {
+                output.println(message);
+        }
 
 	private void addResponse(IHttpRequestResponse originalRequest, IHttpRequestResponse replayedRequest){
 		//{"Method", "URL", "Parms","Orig Response Size", "Response Size", "Orig Return Code", "Return Code", "Diff Bytes", "similarity", REQUEST_OBJECT_KEY, RESPONSE_OBJECT_KEY};

@@ -62,7 +62,7 @@ public class AuthzContainer extends Container {
 	public static String REQUEST_OBJECT_KEY = "req_obj_key";
 	public static String RESPONSE_OBJECT_KEY = "resp_obj_key";
 	private static Object[] REQUEST_HEADERS = new Object[]{"#", "Method", "URL", "Parms", "Response Code", REQUEST_OBJECT_KEY};
-	private static Object[] RESPONSE_HEADERS = new Object[]{"#", "Method", "URL", "Parms","Orig Response Size", "Response Size", "Orig Return Code", "Return Code", "Diff Bytes", "Similarity", REQUEST_OBJECT_KEY, RESPONSE_OBJECT_KEY};
+	private static Object[] RESPONSE_HEADERS = new Object[]{"#", "Method", "URL", "Bypass method","Orig Response Size", "Response Size", "Orig Return Code", "Return Code", "Diff Bytes", "Similarity", REQUEST_OBJECT_KEY, RESPONSE_OBJECT_KEY};
 	public static String TEXTEDITOR_REQUET_KEY = IHttpRequestResponse.class.toString();
 
         private PrintWriter output;
@@ -255,7 +255,7 @@ public class AuthzContainer extends Container {
 		};
 		responseTable.setAutoCreateRowSorter(true);
 		responseTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-		//"Method", "URL", "Parms","Orig Response Size", "Response Size", "Orig Return Code", "Return Code", "Diff Bytes", REQUEST_OBJECT_KEY, RESPONSE_OBJECT_KEY
+		//"Method", "URL", "Bypass method","Orig Response Size", "Response Size", "Orig Return Code", "Return Code", "Diff Bytes", REQUEST_OBJECT_KEY, RESPONSE_OBJECT_KEY
 		responseTable.getColumnModel().getColumn(0).setPreferredWidth(30);
 		responseTable.getColumnModel().getColumn(1).setPreferredWidth(50);
 		responseTable.getColumnModel().getColumn(2).setPreferredWidth(600);
@@ -534,7 +534,7 @@ public class AuthzContainer extends Container {
                 // So, the request method, URL and body are unchanged.
                 maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
                 maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
-                runRequest(maliciousRequest, originalReqResp);
+                runRequest(maliciousRequest, originalReqResp, "User-defined header replacement");
                 
                 return;
             }
@@ -560,7 +560,7 @@ public class AuthzContainer extends Container {
                 headers.set(indexOfTheCookieHeader, "Cookie: noneof=theexpected"); // replace the header with one that does not contain any of the expected values
                 maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
                 maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
-                runRequest(maliciousRequest, originalReqResp);
+                runRequest(maliciousRequest, originalReqResp, "An empty cookie header");
                 
                 // variant 2.
                 if(skipNoCookie==false)
@@ -568,7 +568,7 @@ public class AuthzContainer extends Container {
                     headers.remove(indexOfTheCookieHeader); // remove the header completely
                     maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
                     maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
-                    runRequest(maliciousRequest, originalReqResp);                    
+                    runRequest(maliciousRequest, originalReqResp, "No cookie header at all");                    
                 }                                
                 // we're done for "null_session"
                 return;
@@ -608,7 +608,7 @@ public class AuthzContainer extends Container {
                // 1. cookies variant
                maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
                maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
-               runRequest(maliciousRequest, originalReqResp);                
+               runRequest(maliciousRequest, originalReqResp, "Magic cookies");                
                
                // 2. The query string variant
                // Now, from what we see dealing with helpers' addParameter() is gonna be quite brutal and difficult in general
@@ -647,7 +647,7 @@ public class AuthzContainer extends Container {
                    
                    maliciousRequest = burpCallback.getHelpers().stringToBytes(maliciousRequestString);
                    
-                   runRequest(maliciousRequest, originalReqResp); 
+                   runRequest(maliciousRequest, originalReqResp, "Magic query"); 
                    return;
                }               
                if(originalReqInfo.getMethod()=="POST")
@@ -657,12 +657,13 @@ public class AuthzContainer extends Container {
                    maliciousRequestBodyString = maliciousRequestBodyString + "&" + magicQueryString; 
                    maliciousRequestBody = burpCallback.getHelpers().stringToBytes(maliciousRequestBodyString);                   
                    maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);                   
-                   runRequest(maliciousRequest, originalReqResp); 
+                   runRequest(maliciousRequest, originalReqResp, "Magic query"); 
                    return;
                }
                logOutput("[DEBUG] Query string not supported for "+originalReqInfo.getMethod()+" HTTP method, nothing to do.");
                return;               
             }            
+            
             // So far so good
             /*
             if(transformation=="path")
@@ -683,10 +684,10 @@ public class AuthzContainer extends Container {
             */
             //logOutput("Unknown transformation '"+transformation+"' (maybe not yet implemented?). Nothing to do.");
         }
-        private void runRequest(byte[] maliciousRequest, IHttpRequestResponse originalReqResp)
+        private void runRequest(byte[] maliciousRequest, IHttpRequestResponse originalReqResp, String method)
         {                                 
             IHttpRequestResponse resp = burpCallback.makeHttpRequest(originalReqResp.getHttpService(), maliciousRequest); 
-            addResponse(originalReqResp, resp);
+            addResponse(originalReqResp, resp, method);
         }
 	//set headerName and newHeader
 	private void prepareHeaders() {
@@ -735,7 +736,7 @@ public class AuthzContainer extends Container {
                 output.println(message);
         }
 
-	private void addResponse(IHttpRequestResponse originalRequest, IHttpRequestResponse replayedRequest){
+	private void addResponse(IHttpRequestResponse originalRequest, IHttpRequestResponse replayedRequest, String method){
 		//{"Method", "URL", "Parms","Orig Response Size", "Response Size", "Orig Return Code", "Return Code", "Diff Bytes", "similarity", REQUEST_OBJECT_KEY, RESPONSE_OBJECT_KEY};
 		IRequestInfo originalRequestInfo = burpCallback.getHelpers().analyzeRequest(originalRequest);
 		IRequestInfo replayedRequestInfo = burpCallback.getHelpers().analyzeRequest(replayedRequest);
@@ -792,7 +793,7 @@ public class AuthzContainer extends Container {
 			  idx,
 				replayedRequestInfo.getMethod(), 
 				originalRequestInfo.getUrl(), 
-				(replayedRequestInfo.getParameters().size() > 0), 
+				method, 
 				originalResponseLength,
 				replayedResponseLength,
 				originalResponseStatusCode,

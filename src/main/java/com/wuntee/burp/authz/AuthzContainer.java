@@ -32,6 +32,7 @@ import javax.swing.table.TableCellRenderer;
 import burp.IBurpExtenderCallbacks;
 import burp.IHttpRequestResponse;
 import burp.IHttpRequestResponsePersisted;
+import burp.IParameter;
 import burp.IRequestInfo;
 import burp.IResponseInfo;
 import javax.swing.JCheckBox;
@@ -489,33 +490,32 @@ public class AuthzContainer extends Container {
             IRequestInfo originalReqInfo = burpCallback.getHelpers().analyzeRequest(originalReqResp);
             // header of request should be a string
             List<String> headers = originalReqInfo.getHeaders();
+            int indexOfTheCookieHeader=0;
             // iterate over all headers
+            
             for(int h=0; h<headers.size(); h++)
             {
-                // the "headers" transformation is inherent
-                // iterate over all new headers
-                // on match, replace the header
+                
+                // the "headers" transformation is the original mode of operation by this plugin                
+                // we have turned it into any header replacement mode
+                // then extended it with other modes of potential authorization bypass.
+                
+                // The algorithm below:
+                // 1) iterate over all new headers
+                // 2) take notice of the index of the cookie header if present
+                // 3) on match, replace the header - whatever its name is
                 for(int i=0;i<headersToReplace.length;i++)
                 {
                     if(headers.get(h).toLowerCase().startsWith(namesOfHeadersToReplace[i].toLowerCase()))
                     {
-                        if(namesOfHeadersToReplace[i].startsWith("Cookie")&&(transformation=="null_session"||transformation=="magic_params"))
+                        if(namesOfHeadersToReplace[i].startsWith("Cookie"))
                         {
-                            if(transformation=="null_session")
-                            {
-                                headers.set(h, "Cookie: no=thing");
-                            }
-                            else
-                            {
-                                //we add user-defined custom headers, then we append the cookies with the magic list
-                                String magic_cookies="admin=1; operator=1;";
-                                headers.set(h, namesOfHeadersToReplace[i].replace("\n","").replace("\r","") + headersToReplace[i] + "; "+magic_cookies);                                
-                            }
+                            indexOfTheCookieHeader=h;    
                         }
-                        // not dealing with a cookie header or dealing with a cookie header but the transformation is null_session or magic_params
-                        else
+                        // except for "null_session" and the default original cookie replacement mode, ALL other modes should use the original cookie header
+                        if(transformation=="headers")
                         {
-                            headers.set(h, namesOfHeadersToReplace[i].replace("\n","").replace("\r","") + headersToReplace[i]);
+                            headers.set(h, namesOfHeadersToReplace[i].replace("\n","").replace("\r","") + headersToReplace[i]);                                                          
                         }
                     }
                 }
@@ -526,21 +526,144 @@ public class AuthzContainer extends Container {
             // We will want to have more requests for some transformations (like path, where there can be different variants)
             // while only having one for others (e.g. null_session)
             // thus all runRequest() calls will be performed individually in each transformation-specific conditional block
-                               
-            if(transformation=="headers"||transformation=="null_session")
+                      
+            // 1. headers ###############
+            if(transformation=="headers")
             {
                 // In this case (the basic, original tampering - we only replace the user-defined header list - Cookie by default)
                 // So, the request method, URL and body are unchanged.
                 maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
                 maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
                 runRequest(maliciousRequest, originalReqResp);
+                
+                return;
+            }
+            
+            // 2. null_session ###############
+            if(transformation=="null_session")
+            {
+                // two variants here:
+                // 1. A cookie header without of the original cookies defined
+                // 2. No cookie header at all
+                
+                boolean skipNoCookie=false;
+                if(indexOfTheCookieHeader==0) // no cookie header was present in the original request
+                {
+                    // in this case we need to add it
+                    // also, in this case we skip the 2. variant as the original request fullfills it
+                    headers.add("Cookie: noneof=theexpected");
+                    indexOfTheCookieHeader=headers.size()-1;
+                    skipNoCookie=true;
+                }
+                
+                // variant 1.
+                headers.set(indexOfTheCookieHeader, "Cookie: noneof=theexpected"); // replace the header with one that does not contain any of the expected values
+                maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
+                maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
+                runRequest(maliciousRequest, originalReqResp);
+                
+                // variant 2.
+                if(skipNoCookie==false)
+                {
+                    headers.remove(indexOfTheCookieHeader); // remove the header completely
+                    maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
+                    maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
+                    runRequest(maliciousRequest, originalReqResp);                    
+                }                                
+                // we're done for "null_session"
                 return;
             }            
-            // "magic_params" is similar, however does not end on cookies
-            // as it as well supports query string parameters
+            
+            // 3. magic_params ###############
+            // "magic_params" is similar, however does not end with cookies,
+            // as it as well supports query string parameters.            
             // I guess we'll add them with the "addParameter" API call?
-            // appears comfy to code, but won't be good for performance
-                                        
+            // appears comfy to code, but won't be good for performance. 
+            // On the other hand, there's not so many params to add this way.
+            if(transformation=="magic_params")
+            {
+               // two variants:
+               // 1. cookies 
+               // whereas we append the cookie header and send it out just like above               
+               // 2. query string - whereas we add parameters to the request
+               String originalCookieHeader = headers.get(indexOfTheCookieHeader);
+               String newCookieHeader = originalCookieHeader;
+               
+               String[] magicParams={
+"auth",  "login", "authenticated", "admin", "valid_user", "valid-user", "validuser", "authenticated-user", "authenticated_user", "authenticateduser", "valid", "user", "logged", "loggedin", "logged-in", "logged_in", "login", "administrator", "adminuser", "admin-user", "admin_user", "is_valid", "isvalid", "is-valid", "is_admin", "isadmin", "is-admin", "isauthenticated", "is-authenticated", "is_authenticated", "isuser", "is_user", "is-user", "autologin", "auto-login", "auto_login", "userid", "user_id", "user-id", "signid", "sign_id", "sign-id"
+};
+               //we add user-defined custom headers, then we append the cookies with the magic list
+               String magicParamsWithValues[] = new String[magicParams.length];
+               for(int i=0;i<magicParams.length;i++)
+               {
+                   magicParamsWithValues[i]=magicParams[i]+"=1"; // so far only '1' value
+                   // other variants, like 'Y', 'y', 'T', 't' or 'TRUE' could be considered
+               }
+               String magicCookiesString=String.join("; ", magicParams);
+               
+               newCookieHeader = newCookieHeader + "; "+magicCookiesString;
+               
+               headers.set(indexOfTheCookieHeader, newCookieHeader);
+               
+               // 1. cookies variant
+               maliciousRequestBody = Arrays.copyOfRange(originalRawRequest, originalReqInfo.getBodyOffset(), originalRawRequest.length);
+               maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
+               runRequest(maliciousRequest, originalReqResp);                
+               
+               // 2. The query string variant
+               // Now, from what we see dealing with helpers' addParameter() is gonna be quite brutal and difficult in general
+               // from this point, as well as for other transformations, it seems we're gonna simply 
+               // 1. convert our request to a String
+               // 2. replace the original element with the new one
+               // 3. convert it back to byte and send it out
+               // In case of POST/PUT requests we'll also have to make sure that the Content-Length: header contains the valid number.
+               
+               // rebuild the malicious request with the original cookie header for the query string variant
+               headers.set(indexOfTheCookieHeader, originalCookieHeader);
+               maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);
+               String maliciousRequestString = burpCallback.getHelpers().bytesToString(maliciousRequest);
+               // and add the magic params to the URL
+               // then issue the request
+               String magicQueryString=String.join("&",magicParams);
+               if(originalReqInfo.getMethod()=="GET")
+               {
+                   // Several methods here to play with:
+                   //String url = originalReqInfo.getUrl().toString();
+                   //String path = originalReqInfo.getUrl().getPath(); // this should contain the path info if present
+                   //String urlParams = originalReqInfo.getUrl().getQuery();
+                   // getUrl().getFile() is the same as getPath(), except it also contains the query string
+                   // which is best for our current goal.
+                   String urlFile = originalReqInfo.getUrl().getFile(); 
+                   // we'll simply append params to it and replace it                   
+                   
+                   String separator="";
+                   if(originalReqInfo.getUrl().getQuery()==null||originalReqInfo.getUrl().getQuery()=="") 
+                   {
+                       separator="?";
+                   }
+                   String newUrlFile = urlFile+"&"+magicQueryString;                   
+                   
+                   maliciousRequestString = maliciousRequestString.replace(urlFile, newUrlFile);
+                   
+                   maliciousRequest = burpCallback.getHelpers().stringToBytes(maliciousRequestString);
+                   
+                   runRequest(maliciousRequest, originalReqResp); 
+                   return;
+               }               
+               if(originalReqInfo.getMethod()=="POST")
+               {                   
+                   // now, implement POST              
+                   String maliciousRequestBodyString  = burpCallback.getHelpers().bytesToString(maliciousRequestBody);
+                   maliciousRequestBodyString = maliciousRequestBodyString + "&" + magicQueryString; 
+                   maliciousRequestBody = burpCallback.getHelpers().stringToBytes(maliciousRequestBodyString);                   
+                   maliciousRequest = burpCallback.getHelpers().buildHttpMessage(headers, maliciousRequestBody);                   
+                   runRequest(maliciousRequest, originalReqResp); 
+                   return;
+               }
+               logOutput("[DEBUG] Query string not supported for "+originalReqInfo.getMethod()+" HTTP method, nothing to do.");
+               return;               
+            }            
+            // So far so good
             /*
             if(transformation=="path")
             {
@@ -558,7 +681,7 @@ public class AuthzContainer extends Container {
                 runRequest(maliciousRequest, originalReqResp);
             }
             */
-            logOutput("Unknown transformation '"+transformation+"' (maybe not yet implemented?). Nothing to do.");
+            //logOutput("Unknown transformation '"+transformation+"' (maybe not yet implemented?). Nothing to do.");
         }
         private void runRequest(byte[] maliciousRequest, IHttpRequestResponse originalReqResp)
         {                                 

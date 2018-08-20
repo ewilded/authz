@@ -1,0 +1,14 @@
+- Introduce the "black-box" mode. This is purely about the readability of the results:
+Normally, requests sent to this pugin have high level of access (like admin) and the plugin tests whether the same resource/feature can be accessed with least privileged user session. Hence, it hints green all the requests that give similar responses to the original one.
+
+This will be the exact opposite if we test from a black-box perspective (e.g. we simply do not have any high profile credentials cause we are actually doing black box). In such case the base request will be low privileged and returning an empty page/403/something along these lines, therefore responses that are not similar will be of our interest. Proper hinting of these will be, however, problematic (hard to automate, as we will most likely be receiving many different error responses). Hence, the way we automatically hint results should be configurable via a checkbox ("black-box mode").
+
+- Implement missing methods
+
+- Interface the methods up
+
+- Build nice test cases and include them into the project
+
+- Documentation
+
+- Fix the "diff bytes 1337" at some point? :D
